@@ -14,6 +14,7 @@
 #include <wayland-util.h>
 
 #include "keyboard-extension-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
+#include "sommelier-vfio.h"  // NOLINT(build/include_directory)
 
 struct sl_host_keyboard {
   struct sl_seat* seat;
@@ -55,8 +56,10 @@ static void sl_host_pointer_set_cursor(struct wl_client* client,
     host_surface = static_cast<sl_host_surface*>(
         wl_resource_get_user_data(surface_resource));
     host_surface->has_role = 1;
-    if (host_surface->contents_width && host_surface->contents_height)
+    if (host_surface->contents_width && host_surface->contents_height) {
+      sl_update_host_surface(host_surface);
       wl_surface_commit(host_surface->proxy);
+    }
   }
 
   wl_pointer_set_cursor(host->proxy, serial,

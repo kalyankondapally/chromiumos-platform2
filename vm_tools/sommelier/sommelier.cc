@@ -37,6 +37,7 @@
 #include "text-input-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
 #include "viewporter-client-protocol.h"  // NOLINT(build/include_directory)
 #include "xdg-shell-unstable-v6-client-protocol.h"  // NOLINT(build/include_directory)
+#include "sommelier-vfio.h"  // NOLINT(build/include_directory)
 
 #define errno_assert(rv)                                          \
   {                                                               \
@@ -481,8 +482,10 @@ static void sl_internal_xdg_surface_configure(
     sl_configure_window(window);
 
     if (sl_process_pending_configure_acks(window, host_surface)) {
-      if (host_surface)
+      if (host_surface) {
+        sl_update_host_surface(host_surface);
         wl_surface_commit(host_surface->proxy);
+      }
     }
   }
 }
@@ -829,7 +832,7 @@ void sl_window_update(struct sl_window* window) {
                              (window->x - parent->x) / ctx->scale,
                              (window->y - parent->y) / ctx->scale);
   }
-
+  sl_update_host_surface(host_surface);
   wl_surface_commit(host_surface->proxy);
   if (host_surface->contents_width && host_surface->contents_height)
     window->realized = 1;
@@ -867,6 +870,16 @@ static void sl_destroy_host_buffer(struct wl_resource* resource) {
   if (host->sync_point) {
     sl_sync_point_destroy(host->sync_point);
   }
+
+  if (host->target_buffer) {
+    sl_vfio_destroy_resource(host->target_buffer);
+    free(host->target_buffer);
+  }
+  if (host->source_buffer) {
+    sl_vfio_destroy_resource(host->source_buffer);
+    free(host->source_buffer);
+  }
+
   wl_resource_set_user_data(resource, NULL);
   free(host);
 }
@@ -890,12 +903,15 @@ struct sl_host_buffer* sl_create_host_buffer(struct wl_client* client,
   host_buffer->shm_mmap = NULL;
   host_buffer->shm_format = 0;
   host_buffer->proxy = proxy;
+  host_buffer->sync_point = NULL;
+  host_buffer->source_buffer = NULL;
+  host_buffer->target_buffer = NULL;
+
   if (host_buffer->proxy) {
     wl_buffer_set_user_data(host_buffer->proxy, host_buffer);
     wl_buffer_add_listener(host_buffer->proxy, &sl_buffer_listener,
                            host_buffer);
   }
-  host_buffer->sync_point = NULL;
 
   return host_buffer;
 }
@@ -4125,6 +4141,8 @@ int main(int argc, char** argv) {
     }
 
     ctx.drm_device = drm_device;
+    ctx.native_gpu = 1;
+    sl_vifio_initialize_gpu_context();
   }
 
   if (!shm_driver)

@@ -16,6 +16,7 @@
 
 #include "drm-server-protocol.h"  // NOLINT(build/include_directory)
 #include "linux-dmabuf-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
+#include "sommelier-vfio.h"	// NOLINT(build/include_directory)
 
 struct sl_host_drm {
   struct sl_context* ctx;
@@ -104,6 +105,12 @@ static void sl_drm_create_prime_buffer(struct wl_client* client,
   struct sl_host_drm* host =
       static_cast<sl_host_drm*>(wl_resource_get_user_data(resource));
   struct zwp_linux_buffer_params_v1* buffer_params;
+  if (host->ctx->native_gpu) {
+    sl_vifio_create_prime_buffer(client, host->ctx, host->ctx->virtwl_fd, gbm_device_get_fd(host->ctx->gbm), id,
+                                name, width, height, format, offset0,
+                                stride0, offset1, stride1, offset2, stride2);
+    return;
+  }
 
   assert(name >= 0);
   assert(!offset1);

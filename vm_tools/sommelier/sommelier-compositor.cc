@@ -22,6 +22,7 @@
 #include "drm-server-protocol.h"  // NOLINT(build/include_directory)
 #include "linux-dmabuf-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
 #include "viewporter-client-protocol.h"  // NOLINT(build/include_directory)
+#include "sommelier-vfio.h"	// NOLINT(build/include_directory)
 
 #define MIN_SIZE (INT_MIN / 10)
 #define MAX_SIZE (INT_MAX / 10)
@@ -132,7 +133,8 @@ static uint32_t sl_drm_format_for_shm_format(int format) {
 
 static void sl_output_buffer_destroy(struct sl_output_buffer* buffer) {
   wl_buffer_destroy(buffer->internal);
-  sl_mmap_unref(buffer->mmap);
+  if (buffer->mmap)
+    sl_mmap_unref(buffer->mmap);
   pixman_region32_fini(&buffer->damage);
   wl_list_remove(&buffer->link);
   free(buffer);
@@ -172,6 +174,9 @@ static void sl_host_surface_attach(struct wl_client* client,
   double scale = host->ctx->scale;
 
   host->current_buffer = NULL;
+  host->source = NULL;
+  host->target = NULL;
+
   if (host->contents_shm_mmap) {
     sl_mmap_unref(host->contents_shm_mmap);
     host->contents_shm_mmap = NULL;
@@ -181,8 +186,18 @@ static void sl_host_surface_attach(struct wl_client* client,
     host->contents_width = host_buffer->width;
     host->contents_height = host_buffer->height;
     buffer_proxy = host_buffer->proxy;
-    if (host_buffer->shm_mmap)
+    host->source = host_buffer->source_buffer;
+    host->target = host_buffer->target_buffer;
+    if (host_buffer->shm_mmap) {
       host->contents_shm_mmap = sl_mmap_ref(host_buffer->shm_mmap);
+      if (host_buffer->source_buffer) {
+        fprintf(stderr, "Source buffer present for shmmmap.....");
+      }
+      
+      if (host_buffer->target_buffer) {
+        fprintf(stderr, "Target buffer present for shmmmap.....");
+      }
+    }
   }
 
   if (host->contents_shm_mmap) {
@@ -574,6 +589,8 @@ static void sl_host_surface_commit(struct wl_client* client,
 
     wl_list_remove(&host->current_buffer->link);
     wl_list_insert(&host->busy_buffers, &host->current_buffer->link);
+  } else if (host->ctx->native_gpu && host->source) {
+    sl_update_host_surface(host);
   }
 
   if (host->contents_width && host->contents_height) {
@@ -655,6 +672,15 @@ static void sl_host_surface_commit(struct wl_client* client,
     }
     sl_mmap_unref(host->contents_shm_mmap);
     host->contents_shm_mmap = NULL;
+    host->source = NULL;
+   host->target = NULL;
+  } else if (host->source) {
+    if (host->source->buffer_resource)
+      wl_buffer_send_release(host->source->buffer_resource);
+
+    host->source->buffer_resource = NULL;
+    host->source = NULL;
+    host->target = NULL;
   }
 }
 
@@ -833,6 +859,8 @@ static void sl_compositor_create_host_surface(struct wl_client* client,
   host_surface->contents_scale = 1;
   wl_list_init(&host_surface->contents_viewport);
   host_surface->contents_shm_mmap = NULL;
+  host_surface->source = NULL;
+  host_surface->target = NULL;
   host_surface->has_role = 0;
   host_surface->has_output = 0;
   host_surface->last_event_serial = 0;
